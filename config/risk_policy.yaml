@@ -1,0 +1,100 @@
+# risk_policy.yaml
+#
+# Configurable weights and thresholds for Phase 7's hybrid risk scoring.
+#
+# WHY A SEPARATE FILE FROM detection_policy.yaml:
+#   detection_policy.yaml is explicitly scoped to Phase 4/5 detection logic
+#   (its own header says so). Risk scoring is a distinct phase with a
+#   distinct owner concern -- how much each SIGNAL matters, not what counts
+#   as a signal in the first place. Keeping them separate means a security
+#   reviewer tuning "how paranoid should HTTP destinations be scored" never
+#   has to wade through keyword lists to find it, and vice versa.
+#
+# Read once at import time by scoring/risk_engine.py.
+
+# ---------------------------------------------------------------------------
+# Component weights -- must sum to 1.0 (scoring/risk_engine.py validates this
+# at load time and raises rather than silently normalizing, so a typo is
+# caught immediately, not discovered later as a subtly-wrong score).
+# ---------------------------------------------------------------------------
+weights:
+  deterministic: 0.40   # Phase 4/5 pattern-match confidence -- the highest-precision signal available
+  ai: 0.30               # Phase 6 local-LLM judgment -- catches what regex can't, but less precise than a Luhn-validated card hit
+  context: 0.10          # circumstances around the finding (e.g. was the content obfuscated to evade detection)
+  destination: 0.20      # where the content was headed when observed
+
+# ---------------------------------------------------------------------------
+# Destination scoring -- how much each collector source contributes to the
+# "destination" component, reflecting how close each source is to data
+# actually leaving the machine. HTTP is the only source this lab models as
+# "content actively being sent somewhere"; file/clipboard are staging
+# behaviors, not confirmed departure.
+# ---------------------------------------------------------------------------
+destination_scores:
+  http: 1.0
+  clipboard: 0.4
+  file: 0.2
+
+# ---------------------------------------------------------------------------
+# Context scoring -- bonus applied when content was found only via Phase 5's
+# obfuscation unwrapping, since evasion attempts are themselves a risk signal
+# independent of what was actually hidden.
+# ---------------------------------------------------------------------------
+context:
+  obfuscation_bonus: 0.6   # applied to the 0-1 context component when any obfuscation layer had a real match
+
+# ---------------------------------------------------------------------------
+# Deterministic-signal corroboration -- when MULTIPLE independent detectors
+# match the same content, that is stronger evidence than any one alone.
+# Small, capped bonus on top of the single highest confidence.
+# ---------------------------------------------------------------------------
+deterministic:
+  corroboration_bonus_per_extra_detector: 0.05
+  corroboration_bonus_cap: 0.15
+
+# ---------------------------------------------------------------------------
+# Severity classification -- final 0-100 score is bucketed using these
+# inclusive lower bounds. Configurable so a stricter (or looser) organization
+# can retune without touching code.
+# ---------------------------------------------------------------------------
+severity_thresholds:
+  low: 0
+  medium: 25
+  high: 50
+  critical: 75
+
+# ---------------------------------------------------------------------------
+# Behavioral adjustment ceiling (Phase 8) -- caps how many points behavioral
+# correlation can add on top of the base score, so a correlation bug can
+# never single-handedly push an otherwise-clean event to CRITICAL.
+# ---------------------------------------------------------------------------
+behavioral_adjustment_cap: 25
+
+# ---------------------------------------------------------------------------
+# Behavioral correlation tuning (Phase 8) -- read by
+# correlation/behavior_tracker.py, NOT by scoring/risk_engine.py directly.
+# Lives here rather than a third config file because these values only ever
+# matter in service of producing the behavioral_adjustment number risk_engine
+# consumes -- same "owner concern" reasoning as the rest of this file.
+# ---------------------------------------------------------------------------
+behavioral_correlation:
+  time_window_hours: 24
+
+  # Tiered bonus by count of flagged (any_match=true) events from the same
+  # user within the window. Evaluated highest-threshold-first; only one tier
+  # applies. Deliberately coarse steps rather than a continuous formula --
+  # easier for a reviewer to reason about "3 hits this week" vs "8 hits".
+  repeated_activity_thresholds:
+    - {min_count: 7, bonus: 20}
+    - {min_count: 4, bonus: 12}
+    - {min_count: 2, bonus: 5}
+
+  # Applied when the second half of the time window has a higher average
+  # base_score than the first half -- a rising trend, not just steady noise.
+  escalation_bonus: 10
+  escalation_minimum_delta: 5   # average must rise by at least this many points to count as "escalating"
+
+  # Applied when 2+ of the user's recent flagged events share the same
+  # deterministic/AI category -- a targeted pattern, not scattered one-offs.
+  repeated_category_bonus: 8
+

@@ -1,0 +1,26 @@
+# AI-Tuned DLP & Insider Threat Detection Platform
+# Core dependencies for Phases 0-5 (telemetry, deterministic detection, normalization)
+# Install with: pip install -r requirements.txt
+
+# --- Endpoint telemetry (Phase 3) ---
+watchdog>=6.0.0          # Cross-platform filesystem event monitoring (uses ReadDirectoryChangesW on Windows)
+pyperclip>=1.11.0        # Cross-platform clipboard read access
+
+# --- Local HTTP test destination + collector (Phase 3) ---
+flask>=3.1.0             # Lightweight local server for the simulated exfiltration destination / API
+
+# --- Simulation / test client (Phase 3, 11) ---
+requests>=2.33.0         # Used by the synthetic test client to send sample traffic to the local server
+
+# --- Configuration (Phase 4, 5) ---
+pyyaml>=6.0.3            # Human-editable detection policy (keywords, thresholds, categories)
+python-dotenv>=1.2.0     # Loads .env into environment variables at startup
+
+# --- Testing (all phases) ---
+pytest>=9.1.0            # Unit + integration test runner
+
+# NOTE: sqlite3 (Phase 9) and Ollama's Python usage (Phase 6) are intentionally
+# NOT listed here because they are out of scope for Phases 0-5:
+#   - sqlite3 ships in the Python standard library, no pip install required.
+#   - Ollama is a separate native Windows application (see docs/INSTALLATION.md),
+#     not a pip package; its Python client will be added when Phase 6 is implemented.

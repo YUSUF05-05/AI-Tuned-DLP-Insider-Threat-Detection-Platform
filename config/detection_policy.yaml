@@ -1,0 +1,130 @@
+# detection_policy.yaml
+#
+# Central, human-editable policy for the deterministic detection engine (Phase 4).
+#
+# WHY YAML AND NOT JSON (documented per project rule "explain the lighter alternative"):
+#   JSON was considered and rejected as the policy format because it cannot hold
+#   comments, which matters here since every keyword list and threshold needs an
+#   explanation for why it exists (a security reviewer must be able to read this
+#   file and understand intent, not just data). YAML is a light, well-justified
+#   dependency (PyYAML) that is the de facto standard for security tooling
+#   config (Sigma rules, Wazuh, Suricata companion configs all use YAML).
+#
+# This file is read once at startup by detectors/keyword_detector.py and
+# detectors/filetype_detector.py via common config loading in detectors/engine.py.
+
+# ---------------------------------------------------------------------------
+# Keyword categories (Phase 4.4 — sensitive keyword and category detection)
+# Matching is case-insensitive whole-word/phrase matching (see keyword_detector.py).
+# ---------------------------------------------------------------------------
+keyword_categories:
+  customer_data:
+    description: "Indicates presence of customer PII in content."
+    keywords:
+      - "customer list"
+      - "customer database"
+      - "social security number"
+      - "ssn"
+      - "date of birth"
+      - "passport number"
+      - "driver's license"
+      - "home address"
+
+  financial:
+    description: "Indicates financial or payment-related content."
+    keywords:
+      - "routing number"
+      - "account number"
+      - "wire transfer"
+      - "swift code"
+      - "iban"
+      - "invoice total"
+      - "bank statement"
+      - "payroll"
+
+  source_code_markers:
+    description: "Indicates proprietary source code or build artifacts."
+    keywords:
+      - "confidential and proprietary"
+      - "internal use only"
+      - "do not distribute"
+      - "copyright all rights reserved"
+      - "trade secret"
+
+  credentials_context:
+    description: >
+      Contextual words that raise confidence when found NEAR a secret-like
+      token (used by detectors/secret_detector.py as a confidence booster,
+      not as a standalone trigger).
+    keywords:
+      - "password"
+      - "api key"
+      - "access key"
+      - "private key"
+      - "secret key"
+      - "auth token"
+      - "credentials"
+
+  m_and_a_strategic:
+    description: "Indicates strategic / M&A / competitive material."
+    keywords:
+      - "merger agreement"
+      - "acquisition target"
+      - "non-disclosure agreement"
+      - "letter of intent"
+      - "board deck"
+      - "strategic roadmap"
+
+# ---------------------------------------------------------------------------
+# Sensitive file types (Phase 4.6 — file type / extension detection)
+# ---------------------------------------------------------------------------
+sensitive_file_types:
+  documents:
+    extensions: [".docx", ".doc", ".pdf", ".pptx", ".xlsx", ".csv"]
+    risk_weight: 0.3
+  archives:
+    extensions: [".zip", ".7z", ".rar", ".tar", ".gz"]
+    risk_weight: 0.5
+    note: "Archives are also fed to the Phase 5 normalizer for obfuscation checks."
+  credentials_and_keys:
+    extensions: [".pem", ".key", ".pfx", ".p12", ".env", ".ppk"]
+    risk_weight: 0.9
+  database_dumps:
+    extensions: [".sql", ".db", ".sqlite", ".bak"]
+    risk_weight: 0.7
+  source_code:
+    extensions: [".py", ".js", ".ts", ".java", ".cs", ".go", ".rb", ".php"]
+    risk_weight: 0.2
+
+# ---------------------------------------------------------------------------
+# Content-capture thresholds (privacy-by-design — Phase 3)
+# Collectors only attach raw content_excerpt to an event when a file/clip is
+# under this size AND matches a sensitive file type OR is plain text. This
+# bounds both privacy exposure and I/O cost. See docs/TELEMETRY.md.
+# ---------------------------------------------------------------------------
+content_capture:
+  max_bytes_for_full_read: 2097152      # 2 MiB — above this, only metadata is captured
+  excerpt_max_chars: 4000               # content_excerpt is truncated to this length
+  redact_detected_secrets_in_excerpt: true
+
+# ---------------------------------------------------------------------------
+# Normalization / obfuscation detection thresholds (Phase 5)
+# ---------------------------------------------------------------------------
+normalization:
+  max_recursion_depth: 3                # how many nested encodings to unwrap (base64-in-base64-in-gzip, etc.)
+  min_base64_run_length: 40             # ignore short incidental base64-looking substrings
+  min_printable_ratio_after_decode: 0.85  # decoded bytes must be this printable to be treated as text
+
+# ---------------------------------------------------------------------------
+# Card / payment detection tuning (Phase 4.1)
+# ---------------------------------------------------------------------------
+card_detection:
+  accepted_lengths: [13, 14, 15, 16, 19]
+  validate_with_luhn: true
+
+# ---------------------------------------------------------------------------
+# SWIFT / payment-message detection tuning (Phase 4.2)
+# ---------------------------------------------------------------------------
+swift_detection:
+  bic_lengths: [8, 11]
+  mt_field_tags: [":20:", ":32A:", ":50K:", ":50A:", ":52A:", ":57A:", ":59:", ":70:", ":71A:"]

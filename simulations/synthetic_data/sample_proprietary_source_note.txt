@@ -1,0 +1,4 @@
+CONFIDENTIAL AND PROPRIETARY -- INTERNAL USE ONLY
+Do not distribute outside the engineering org.
+
+Attached: pricing_engine.py (trade secret -- core margin calculation logic)
