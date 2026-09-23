@@ -5,10 +5,12 @@ End-to-end demonstration wiring the full pipeline built so far:
 
     Phase 3 collectors -> Phase 4 detection -> Phase 5 normalization
         -> Phase 6 AI review -> Phase 7 risk scoring -> Phase 8 behavioral
-        correlation -> Phase 7 risk scoring again (final)
+        correlation -> Phase 7 risk scoring again (final) -> Phase 9 SQLite
+        persistence
 
-This is a DEMO / verification harness, not "the product": Phase 9 will add
-SQLite persistence (this still logs to logs/*.jsonl) and Phase 10 will add a
+This is a DEMO / verification harness, not "the product": logs/*.jsonl keeps
+being written unchanged (Phase 9 is an ADDITIONAL sink, not a replacement --
+see database/sqlite_audit.py's module docstring) and Phase 10 will add a
 real dashboard (this still just prints to the console). Nothing here is the
 final alerting UI.
 
@@ -21,11 +23,19 @@ behavioral_adjustment=0 (base_score), correlate, then score again with the
 real adjustment (final score). Same function both times -- no duplicated
 scoring logic.
 
+WHY THE SQLITE WRITE HAPPENS INSIDE analyze_event() AND NOT IN on_event():
+every other enrichment step (Phase 6/7/8) already lives here, and by the
+time this function returns, the event is either fully enriched or it isn't
+-- there's no partial state a caller needs to reason about. A DB write
+failure is handled the same way an AI failure is (Phase 6): logged, not
+raised, so a full disk or a locked file never takes down a collector thread.
+
 Usage (Windows, from the project root, with the venv active):
     python run_pipeline_demo.py
     python run_pipeline_demo.py --watch-dir C:\\dlp-lab\\monitored --http-port 8765
     python run_pipeline_demo.py --no-http           (file monitoring only)
     python run_pipeline_demo.py --no-ai             (skip Phase 6, e.g. Ollama not running)
+    python run_pipeline_demo.py --no-db             (skip Phase 9, JSONL logs only)
 """
 
 from __future__ import annotations
@@ -37,6 +47,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -48,6 +59,7 @@ from collectors.http_collector import create_app
 from ai.ollama_client import analyze as ollama_analyze
 from scoring.risk_engine import compute_risk
 from correlation.behavior_tracker import correlate
+from database.sqlite_audit import SQLiteAuditStore
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
@@ -55,16 +67,18 @@ load_dotenv(ROOT / ".env")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "45"))
+DLP_DATABASE_PATH = os.getenv("DLP_DATABASE_PATH", str(ROOT / "database" / "audit_trail.db"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("pipeline")
 
 
-def analyze_event(event: DLPEvent, flagged_log_path: Path, use_ai: bool) -> None:
+def analyze_event(event: DLPEvent, flagged_log_path: Path, use_ai: bool, db: Optional[SQLiteAuditStore] = None) -> None:
     """
-    Runs the full analysis chain (Phases 4-8) and attaches every result to
+    Runs the full analysis chain (Phases 4-9) and attaches every result to
     the event in place. Prints a console alert with severity/score on any
-    match. This is the seam Phase 9 will extend with SQLite persistence.
+    match, then persists the fully enriched event to SQLite (Phase 9) in
+    addition to the existing JSONL log.
     """
     text = event.content_excerpt or ""
     filename = event.object_ref if event.source == "file" else None
@@ -113,10 +127,19 @@ def analyze_event(event: DLPEvent, flagged_log_path: Path, use_ai: bool) -> None
     if behavior.event_count_in_window:
         print(f"        behavioral: {behavior.event_count_in_window} prior flagged event(s) for {event.user} in window, escalating={behavior.escalating}")
 
+    # Phase 9: persist the fully enriched event. Safe fallback, matching
+    # Phase 6's philosophy -- a DB problem (locked file, full disk) is
+    # logged, never allowed to crash the collector thread that found this.
+    if db is not None:
+        try:
+            db.insert_event(event)
+        except Exception as exc:  # noqa: BLE001 -- intentionally broad, see module docstring
+            logger.error("SQLite persistence failed for event %s: %s", event.event_id, exc)
 
-def build_on_event(flagged_logger: JsonlEventLogger, use_ai: bool):
+
+def build_on_event(flagged_logger: JsonlEventLogger, use_ai: bool, db: Optional[SQLiteAuditStore] = None):
     def on_event(event: DLPEvent):
-        analyze_event(event, flagged_log_path=Path(flagged_logger.log_path), use_ai=use_ai)
+        analyze_event(event, flagged_log_path=Path(flagged_logger.log_path), use_ai=use_ai, db=db)
         if event.any_match:
             flagged_logger.write(event)
 
@@ -124,18 +147,25 @@ def build_on_event(flagged_logger: JsonlEventLogger, use_ai: bool):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Full Phase 3-8 pipeline integration demo")
+    parser = argparse.ArgumentParser(description="Full Phase 3-9 pipeline integration demo")
     parser.add_argument("--watch-dir", default=str(ROOT / "simulations" / "monitored"))
     parser.add_argument("--http-port", type=int, default=8765)
     parser.add_argument("--no-http", action="store_true", help="Disable the HTTP collector/destination")
     parser.add_argument("--no-ai", action="store_true", help="Skip Phase 6 AI review (e.g. Ollama not running)")
+    parser.add_argument("--no-db", action="store_true", help="Skip Phase 9 SQLite persistence (JSONL logs only)")
+    parser.add_argument("--db-path", default=DLP_DATABASE_PATH, help="SQLite database file path")
     args = parser.parse_args()
 
     Path(args.watch_dir).mkdir(parents=True, exist_ok=True)
     (ROOT / "logs").mkdir(parents=True, exist_ok=True)
 
+    db = None
+    if not args.no_db:
+        db = SQLiteAuditStore(db_path=args.db_path)
+        logger.info("SQLite audit trail: %s (%d existing event(s))", args.db_path, db.count_events())
+
     flagged_logger = JsonlEventLogger(ROOT / "logs" / "flagged_events.jsonl")
-    on_event = build_on_event(flagged_logger, use_ai=not args.no_ai)
+    on_event = build_on_event(flagged_logger, use_ai=not args.no_ai, db=db)
 
     file_event_logger = JsonlEventLogger(ROOT / "logs" / "file_events.jsonl")
     observer = start_file_collector(args.watch_dir, file_event_logger, on_event=on_event)
@@ -162,6 +192,8 @@ def main():
         logger.info("Stopping...")
         observer.stop()
         observer.join()
+        if db is not None:
+            db.close()
 
 
 if __name__ == "__main__":
