@@ -1,0 +1,58 @@
+# alert_policy.yaml
+#
+# Phase 10 -- policy for the alert engine (alerts/alert_engine.py).
+#
+# WHY A SEPARATE FILE (same reasoning as risk_policy.yaml vs detection_policy.yaml,
+# see that file's own header): "which events are alert-worthy and where the
+# alert goes" is a distinct owner concern from "how risky is this event"
+# (scoring/risk_engine.py) and "what counts as a signal" (detection_policy.yaml).
+# A security reviewer tuning alert routing (e.g. adding a webhook) should not
+# need to wade through keyword lists or scoring weights to find it.
+#
+# Read once at construction time by alerts/alert_engine.py's AlertEngine.
+
+# ---------------------------------------------------------------------------
+# Trigger threshold -- an event alerts when its final risk_assessment.severity
+# is at or above this severity, using the SAME ordering as
+# risk_policy.yaml's severity_thresholds: low < medium < high < critical.
+# "medium" is the default here deliberately: "low" severity is the floor
+# every matched event lands in at minimum (severity_thresholds.low: 0), so
+# alerting on "low" would mean alerting on every single detector hit,
+# drowning the channels below in noise the same way that a single stray
+# keyword match would. "medium" is the first bucket that reflects more than
+# one weak signal.
+# ---------------------------------------------------------------------------
+trigger_severity_threshold: "medium"
+
+# ---------------------------------------------------------------------------
+# Channels -- each entry names a channel implementation (see
+# alerts/channels.py's CHANNEL_REGISTRY) and whether it's enabled. Console
+# and log_file work out of the box (no external dependency, no credentials).
+# webhook and email are wired against the SAME AlertChannel interface but
+# disabled by default -- they need operator-supplied config (a real URL,
+# real SMTP creds) this lab does not fabricate (see docs/THREAT_MODEL.md A2
+# -- no real-looking-but-fake secrets are invented here either). Flip
+# `enabled: true` and fill in the fields below to turn either on; see
+# alerts/channels.py's WebhookChannel/EmailChannel docstrings for exactly
+# what each does once enabled.
+# ---------------------------------------------------------------------------
+channels:
+  console:
+    enabled: true
+
+  log_file:
+    enabled: true
+    path: "logs/alerts.log"
+
+  webhook:
+    enabled: false
+    url: ""            # e.g. a Slack incoming webhook or a generic HTTP endpoint
+    timeout_seconds: 5
+
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    use_tls: true
+    from_address: ""
+    to_addresses: []

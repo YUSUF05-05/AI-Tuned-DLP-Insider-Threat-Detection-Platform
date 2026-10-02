@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DLP Audit Console</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #10161d;
+    --line: #223040;
+    --line-soft: #182230;
+    --text: #d7e2ec;
+    --text-dim: #7e93a6;
+    --text-faint: #4d6172;
+    --accent: #4f9bd6;
+    --critical: #e5484d;
+    --high: #e8974e;
+    --medium: #4f9bd6;
+    --low: #5b6b78;
+    --ok: #3fb67f;
+    --mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0;
+    color: var(--text);
+  }
+  header h1 span { color: var(--text-dim); font-weight: 400; }
+  #status-line {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-faint);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #poll-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 0 0 rgba(63,182,127,0.6);
+    animation: pulse 2.4s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(63,182,127,0.45); }
+    70% { box-shadow: 0 0 0 6px rgba(63,182,127,0); }
+    100% { box-shadow: 0 0 0 0 rgba(63,182,127,0); }
+  }
+
+  main { padding: 24px 28px 60px; max-width: 1180px; margin: 0 auto; }
+
+  .summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 22px;
+  }
+  .summary .card {
+    padding: 16px 18px;
+    border-right: 1px solid var(--line);
+  }
+  .summary .card:last-child { border-right: none; }
+  .card .label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: none;
+    margin-bottom: 6px;
+  }
+  .card .value {
+    font-family: var(--mono);
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .card .value.critical { color: var(--critical); }
+  .card .value.ok { color: var(--ok); }
+  .card .value.bad { color: var(--critical); }
+  .card .sub { font-size: 11px; color: var(--text-faint); margin-top: 4px; font-family: var(--mono); }
+
+  section.block {
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    margin-bottom: 22px;
+    padding: 16px 18px;
+  }
+  section.block h2 {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin: 0 0 12px 0;
+    text-transform: none;
+  }
+
+  .sev-bar {
+    display: flex;
+    height: 10px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--line-soft);
+    margin-bottom: 10px;
+  }
+  .sev-bar div { height: 100%; }
+  .sev-legend {
+    display: flex;
+    gap: 22px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .sev-legend .dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+  .sev-legend span.count { color: var(--text); }
+
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .toolbar select, .toolbar input {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 3px;
+  }
+  .toolbar input { width: 140px; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .count { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  thead th:hover { color: var(--text); }
+  thead th.sorted::after { content: " \25BE"; color: var(--accent); }
+  tbody tr.event-row {
+    cursor: pointer;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  tbody tr.event-row:hover { background: var(--line-soft); }
+  tbody td { padding: 8px 10px; vertical-align: top; font-family: var(--mono); white-space: nowrap; }
+  tbody td.wrap { white-space: normal; font-family: var(--sans); }
+
+  .sev-pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+  }
+  .sev-critical { color: var(--critical); }
+  .sev-high { color: var(--high); }
+  .sev-medium { color: var(--medium); }
+  .sev-low { color: var(--low); }
+
+  .expand-caret { color: var(--text-faint); width: 14px; display: inline-block; }
+
+  tr.detail-row td {
+    background: var(--panel);
+    padding: 0;
+    white-space: normal;
+  }
+  .detail-inner {
+    padding: 16px 18px 18px 34px;
+    border-left: 2px solid var(--accent);
+    font-family: var(--sans);
+  }
+  .detail-inner h3 {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin: 14px 0 6px;
+  }
+  .detail-inner h3:first-child { margin-top: 0; }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .kv { font-size: 12.5px; }
+  .kv .k { color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
+  .kv .v { color: var(--text); }
+  ul.evidence-list { list-style: none; margin: 0; padding: 0; }
+  ul.evidence-list li {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 0;
+    border-bottom: 1px dashed var(--line-soft);
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  ul.evidence-list li .conf { color: var(--text-dim); }
+  ol.explain-list { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--text-dim); }
+  ol.explain-list li { padding: 2px 0; }
+  .empty-note { color: var(--text-faint); font-size: 12.5px; font-style: italic; }
+
+  .loading, .error-note {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-faint);
+    padding: 20px 0;
+    text-align: center;
+  }
+  .error-note { color: var(--critical); }
+
+  footer {
+    text-align: center;
+    color: var(--text-faint);
+    font-size: 11px;
+    font-family: var(--mono);
+    padding: 20px 0 40px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>DLP Audit Console <span>&middot; insider threat detection</span></h1>
+  <div id="status-line"><span id="poll-dot"></span><span id="last-updated">loading&hellip;</span></div>
+</header>
+
+<main>
+  <div class="summary">
+    <div class="card">
+      <div class="label">Total events</div>
+      <div class="value mono" id="card-total">&mdash;</div>
+      <div class="sub">audited, all severities</div>
+    </div>
+    <div class="card">
+      <div class="label">Flagged</div>
+      <div class="value mono" id="card-flagged">&mdash;</div>
+      <div class="sub">medium severity and above</div>
+    </div>
+    <div class="card">
+      <div class="label">Critical</div>
+      <div class="value mono critical" id="card-critical">&mdash;</div>
+      <div class="sub">requires review now</div>
+    </div>
+    <div class="card">
+      <div class="label">Audit chain</div>
+      <div class="value mono" id="card-integrity">&mdash;</div>
+      <div class="sub" id="integrity-detail">checking&hellip;</div>
+    </div>
+  </div>
+
+  <section class="block">
+    <h2>Severity breakdown</h2>
+    <div class="sev-bar" id="sev-bar"></div>
+    <div class="sev-legend" id="sev-legend"></div>
+  </section>
+
+  <section class="block">
+    <h2>Events</h2>
+    <div class="toolbar">
+      <select id="filter-severity">
+        <option value="">All severities</option>
+        <option value="critical">critical</option>
+        <option value="high">high</option>
+        <option value="medium">medium</option>
+        <option value="low">low</option>
+      </select>
+      <select id="filter-source">
+        <option value="">All sources</option>
+        <option value="file">file</option>
+        <option value="clipboard">clipboard</option>
+        <option value="http">http</option>
+      </select>
+      <input id="filter-user" type="text" placeholder="filter by user&hellip;">
+      <div class="spacer"></div>
+      <span class="count" id="row-count"></span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th data-key="timestamp">time</th>
+          <th data-key="user">user</th>
+          <th data-key="source">source</th>
+          <th data-key="risk_severity">severity</th>
+          <th data-key="risk_score">score</th>
+          <th data-key="ai_category">category</th>
+          <th data-key="needs_ai_review">ai</th>
+        </tr>
+      </thead>
+      <tbody id="event-rows">
+        <tr><td colspan="7" class="loading">loading events&hellip;</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>polling every 10s &middot; read-only &middot; local audit trail only</footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var REFRESH_MS = 10000;
+  var state = {
+    events: [],
+    sortKey: "timestamp",
+    sortDir: "desc",
+    expandedId: null,
+    detailCache: {},
+  };
+
+  function el(tag, attrs, text) {
+    var e = document.createElement(tag);
+    if (attrs) { for (var k in attrs) e.setAttribute(k, attrs[k]); }
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function fetchJSON(url) {
+    return fetch(url).then(function (r) {
+      if (!r.ok) { throw new Error(url + " -> HTTP " + r.status); }
+      return r.json();
+    });
+  }
+
+  // ---- Summary + severity bar --------------------------------------------
+
+  var SEV_COLOR = { critical: "var(--critical)", high: "var(--high)", medium: "var(--medium)", low: "var(--low)" };
+  var SEV_ORDER = ["critical", "high", "medium", "low"];
+
+  function renderSummary(data) {
+    document.getElementById("card-total").textContent = data.total_events;
+    document.getElementById("card-flagged").textContent = data.flagged_events;
+    document.getElementById("card-critical").textContent = data.critical_events;
+    renderSeverityBar(data.severity_counts);
+  }
+
+  function renderSeverityBar(counts) {
+    var total = SEV_ORDER.reduce(function (s, k) { return s + (counts[k] || 0); }, 0);
+    var bar = document.getElementById("sev-bar");
+    var legend = document.getElementById("sev-legend");
+    bar.innerHTML = "";
+    legend.innerHTML = "";
+    SEV_ORDER.forEach(function (key) {
+      var count = counts[key] || 0;
+      var pct = total > 0 ? (count / total) * 100 : 0;
+      if (pct > 0) {
+        var seg = el("div", { style: "width:" + pct.toFixed(2) + "%;background:" + SEV_COLOR[key] + ";" });
+        bar.appendChild(seg);
+      }
+      var item = el("span");
+      var dot = el("span", { class: "dot", style: "background:" + SEV_COLOR[key] + ";" });
+      item.appendChild(dot);
+      item.appendChild(document.createTextNode(key + " "));
+      var countSpan = el("span", { class: "count" }, String(count));
+      item.appendChild(countSpan);
+      legend.appendChild(item);
+    });
+    if (total === 0) {
+      legend.appendChild(el("span", { class: "empty-note" }, "no events audited yet"));
+    }
+  }
+
+  // ---- Integrity indicator ------------------------------------------------
+
+  function renderIntegrity(data) {
+    var valueEl = document.getElementById("card-integrity");
+    var detailEl = document.getElementById("integrity-detail");
+    if (data.healthy) {
+      valueEl.textContent = "verified";
+      valueEl.className = "value mono ok";
+      detailEl.textContent = data.checked_live_row
+        ? "triggers active, live write rejected"
+        : "triggers active, no rows to live-test yet";
+    } else {
+      valueEl.textContent = "at risk";
+      valueEl.className = "value mono bad";
+      var reasons = [];
+      if (data.missing_triggers && data.missing_triggers.length) reasons.push(data.missing_triggers.length + " trigger(s) missing");
+      if (data.tables_with_cascade_delete && data.tables_with_cascade_delete.length) reasons.push("cascade delete present");
+      if (data.update_blocked === false) reasons.push("UPDATE not blocked");
+      if (data.delete_blocked === false) reasons.push("DELETE not blocked");
+      if (data.error) reasons.push(data.error);
+      detailEl.textContent = reasons.join(", ") || "see /api/integrity";
+    }
+  }
+
+  // ---- Events table ---------------------------------------------------
+
+  function applyClientFilters(events) {
+    var userQuery = document.getElementById("filter-user").value.trim().toLowerCase();
+    if (!userQuery) return events;
+    return events.filter(function (e) {
+      return (e.user || "").toLowerCase().indexOf(userQuery) !== -1;
+    });
+  }
+
+  function sortEvents(events) {
+    var key = state.sortKey, dir = state.sortDir;
+    return events.slice().sort(function (a, b) {
+      var av = a[key], bv = b[key];
+      if (av === null || av === undefined) av = "";
+      if (bv === null || bv === undefined) bv = "";
+      if (av < bv) return dir === "asc" ? -1 : 1;
+      if (av > bv) return dir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "\u2014";
+    return iso.replace("T", " ").replace(/\.\d+Z$/, "Z").slice(5, 19);
+  }
+
+  function sevPill(sev) {
+    return el("span", { class: "sev-pill sev-" + (sev || "low") }, sev || "\u2014");
+  }
+
+  function renderTable() {
+    var tbody = document.getElementById("event-rows");
+    tbody.innerHTML = "";
+    var filtered = sortEvents(applyClientFilters(state.events));
+    document.getElementById("row-count").textContent = filtered.length + " shown";
+
+    document.querySelectorAll("thead th[data-key]").forEach(function (th) {
+      th.classList.toggle("sorted", th.getAttribute("data-key") === state.sortKey);
+    });
+
+    if (filtered.length === 0) {
+      tbody.appendChild(el("tr", {}));
+      tbody.lastChild.appendChild(el("td", { colspan: "7", class: "loading" }, "no events match these filters"));
+      return;
+    }
+
+    filtered.forEach(function (ev) {
+      var row = el("tr", { class: "event-row", "data-id": ev.event_id });
+      var timeCell = el("td");
+      timeCell.appendChild(el("span", { class: "expand-caret" }, state.expandedId === ev.event_id ? "\u25BE" : "\u25B8"));
+      timeCell.appendChild(document.createTextNode(fmtTime(ev.timestamp)));
+      row.appendChild(timeCell);
+      row.appendChild(el("td", {}, ev.user || "\u2014"));
+      row.appendChild(el("td", {}, ev.source || "\u2014"));
+      var sevCell = el("td");
+      sevCell.appendChild(sevPill(ev.risk_severity));
+      row.appendChild(sevCell);
+      row.appendChild(el("td", {}, ev.risk_score !== null && ev.risk_score !== undefined ? String(ev.risk_score) : "\u2014"));
+      row.appendChild(el("td", {}, ev.ai_category || "\u2014"));
+      row.appendChild(el("td", {}, ev.needs_ai_review ? "yes" : "no"));
+      row.addEventListener("click", function () { toggleExpand(ev.event_id); });
+      tbody.appendChild(row);
+
+      if (state.expandedId === ev.event_id) {
+        tbody.appendChild(renderDetailRow(ev.event_id));
+      }
+    });
+  }
+
+  function renderDetailRow(eventId) {
+    var tr = el("tr", { class: "detail-row" });
+    var td = el("td", { colspan: "7" });
+    var inner = el("div", { class: "detail-inner" });
+    var detail = state.detailCache[eventId];
+    if (!detail) {
+      inner.appendChild(el("div", { class: "loading" }, "loading detail\u2026"));
+    } else {
+      inner.appendChild(buildDetail(detail));
+    }
+    td.appendChild(inner);
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function kv(label, value) {
+    var wrap = el("div", { class: "kv" });
+    wrap.appendChild(el("div", { class: "k" }, label));
+    wrap.appendChild(el("div", { class: "v" }, value === null || value === undefined || value === "" ? "\u2014" : String(value)));
+    return wrap;
+  }
+
+  function buildDetail(d) {
+    var frag = document.createDocumentFragment();
+
+    var grid = el("div", { class: "detail-grid" });
+    grid.appendChild(kv("object", d.object_ref));
+    grid.appendChild(kv("host", d.host));
+    grid.appendChild(kv("size (bytes)", d.size_bytes));
+    grid.appendChild(kv("inserted at", d.inserted_at));
+    frag.appendChild(grid);
+
+    frag.appendChild(el("h3", {}, "Detections"));
+    if (d.detections && d.detections.length) {
+      var list = el("ul", { class: "evidence-list" });
+      d.detections.forEach(function (det) {
+        var li = el("li");
+        li.appendChild(document.createTextNode(det.detector + " \u2192 " + (det.category || "\u2014")));
+        li.appendChild(el("span", { class: "conf" }, "conf " + (det.confidence !== undefined ? det.confidence.toFixed(2) : "\u2014")));
+        list.appendChild(li);
+      });
+      frag.appendChild(list);
+    } else {
+      frag.appendChild(el("div", { class: "empty-note" }, "no direct detector matches (obfuscation-only, see below)"));
+    }
+
+    if (d.obfuscation && d.obfuscation.length) {
+      frag.appendChild(el("h3", {}, "Obfuscation"));
+      var obList = el("ul", { class: "evidence-list" });
+      d.obfuscation.forEach(function (ob) {
+        var li = el("li");
+        li.appendChild(document.createTextNode(ob.technique + " (" + ob.layers + " layer" + (ob.layers === 1 ? "" : "s") + ")"));
+        li.appendChild(el("span", { class: "conf" }, (ob.rescanned_detections || []).length + " match(es)"));
+        obList.appendChild(li);
+      });
+      frag.appendChild(obList);
+    }
+
+    if (d.ai_status) {
+      frag.appendChild(el("h3", {}, "AI review"));
+      if (d.ai_status === "ok") {
+        var aiGrid = el("div", { class: "detail-grid" });
+        aiGrid.appendChild(kv("sensitive", d.ai_is_sensitive ? "yes" : "no"));
+        aiGrid.appendChild(kv("category", d.ai_category));
+        aiGrid.appendChild(kv("confidence", d.ai_confidence !== undefined && d.ai_confidence !== null ? d.ai_confidence.toFixed(2) : "\u2014"));
+        aiGrid.appendChild(kv("model", d.ai_model));
+        frag.appendChild(aiGrid);
+        if (d.ai_reasoning) frag.appendChild(el("div", { class: "empty-note" }, d.ai_reasoning));
+      } else {
+        frag.appendChild(el("div", { class: "empty-note" }, "AI review unavailable: " + (d.ai_error || "unknown error")));
+      }
+    }
+
+    frag.appendChild(el("h3", {}, "Risk score breakdown"));
+    if (d.risk_components) {
+      var riskGrid = el("div", { class: "detail-grid" });
+      Object.keys(d.risk_components).forEach(function (comp) {
+        riskGrid.appendChild(kv(comp, d.risk_components[comp]));
+      });
+      frag.appendChild(riskGrid);
+    }
+    if (d.risk_explanation && d.risk_explanation.length) {
+      var ol = el("ol", { class: "explain-list" });
+      d.risk_explanation.forEach(function (line) { ol.appendChild(el("li", {}, line)); });
+      frag.appendChild(ol);
+    }
+
+    frag.appendChild(el("h3", {}, "Behavioral correlation (Phase 8)"));
+    if (d.behavioral_event_count_in_window !== null && d.behavioral_event_count_in_window !== undefined) {
+      var behGrid = el("div", { class: "detail-grid" });
+      behGrid.appendChild(kv("events in window", d.behavioral_event_count_in_window));
+      behGrid.appendChild(kv("escalating", d.behavioral_escalating ? "yes" : "no"));
+      behGrid.appendChild(kv("repeated categories", (d.behavioral_repeated_categories || []).join(", ") || "none"));
+      frag.appendChild(behGrid);
+      if (d.behavioral_explanation && d.behavioral_explanation.length) {
+        var bol = el("ol", { class: "explain-list" });
+        d.behavioral_explanation.forEach(function (line) { bol.appendChild(el("li", {}, line)); });
+        frag.appendChild(bol);
+      }
+    } else {
+      frag.appendChild(el("div", { class: "empty-note" }, "no behavioral context recorded for this event"));
+    }
+
+    return frag;
+  }
+
+  function toggleExpand(eventId) {
+    if (state.expandedId === eventId) {
+      state.expandedId = null;
+      renderTable();
+      return;
+    }
+    state.expandedId = eventId;
+    renderTable();
+    if (!state.detailCache[eventId]) {
+      fetchJSON("/api/events/" + encodeURIComponent(eventId)).then(function (detail) {
+        state.detailCache[eventId] = detail;
+        if (state.expandedId === eventId) renderTable();
+      }).catch(function () { /* detail fetch failure leaves the "loading" state visible */ });
+    }
+  }
+
+  // ---- Polling loop -----------------------------------------------------
+
+  function refreshEvents() {
+    var params = new URLSearchParams();
+    var sev = document.getElementById("filter-severity").value;
+    var src = document.getElementById("filter-source").value;
+    if (sev) params.set("severity", sev);
+    if (src) params.set("source", src);
+    params.set("limit", "200");
+    return fetchJSON("/api/events?" + params.toString()).then(function (data) {
+      state.events = data.events;
+      renderTable();
+    });
+  }
+
+  function refreshAll() {
+    return Promise.all([
+      fetchJSON("/api/summary").then(renderSummary),
+      fetchJSON("/api/integrity").then(renderIntegrity),
+      refreshEvents(),
+    ]).then(function () {
+      document.getElementById("last-updated").textContent = "updated " + new Date().toLocaleTimeString();
+      document.getElementById("poll-dot").style.background = "var(--ok)";
+    }).catch(function (err) {
+      document.getElementById("last-updated").textContent = "update failed: " + err.message;
+      document.getElementById("poll-dot").style.background = "var(--critical)";
+    });
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    document.getElementById("filter-severity").addEventListener("change", refreshEvents);
+    document.getElementById("filter-source").addEventListener("change", refreshEvents);
+    document.getElementById("filter-user").addEventListener("input", renderTable);
+    document.querySelectorAll("thead th[data-key]").forEach(function (th) {
+      th.addEventListener("click", function () {
+        var key = th.getAttribute("data-key");
+        if (state.sortKey === key) {
+          state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+        } else {
+          state.sortKey = key;
+          state.sortDir = "asc";
+        }
+        renderTable();
+      });
+    });
+
+    refreshAll();
+    setInterval(refreshAll, REFRESH_MS);
+  });
+})();
+</script>
+
+</body>
+</html>

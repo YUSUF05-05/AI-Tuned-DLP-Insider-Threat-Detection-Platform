@@ -3,14 +3,15 @@
 A defensive, lab-scale Data Loss Prevention and insider-threat detection
 pipeline: endpoint telemetry (file/clipboard/HTTP) → obfuscation-aware
 normalization → a deterministic detection engine (payment cards, SWIFT
-codes, credentials, sensitive keywords, sensitive file types) → (planned)
-local-LLM review, hybrid risk scoring, behavioral correlation, a SQLite audit
+codes, credentials, sensitive keywords, sensitive file types) → local-LLM
+review, hybrid risk scoring, behavioral correlation, a SQLite audit
 trail, and an analyst dashboard.
 
-**Status: Phases 0-5 complete and tested (79/79 tests passing).** Phases
-6-10 (AI analysis, risk scoring, behavioral correlation, database, alerting
-& dashboard) are scaffolded with placeholder READMEs but not yet
-implemented — see each empty phase directory for what it will contain.
+**Status: Phases 0-10 implemented.** The pipeline includes local AI review,
+risk scoring, behavioral correlation, an append-only SQLite audit trail,
+alert routing, and a separate read-only analyst dashboard. Phases 11-18 in
+the project roadmap cover expanded scenarios, evaluation, hardening, and
+portfolio documentation.
 
 Built as a portfolio project. Uses synthetic/publicly-documented test data
 exclusively; performs no real data exfiltration (the "external destination"
@@ -30,9 +31,19 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 copy .env.example .env
-python -m pytest tests/ -v          # expect: 79 passed
+python -m pytest tests/ -v          # run the project test suite
 python run_pipeline_demo.py         # starts file + HTTP collectors together
 ```
+
+The pipeline also starts the Phase 10 alert engine and writes to the SQLite
+audit trail. To run the analyst dashboard separately, open another terminal:
+
+```powershell
+python -m dashboard.run_dashboard --port 8766
+```
+
+Then open `http://127.0.0.1:8766`. The dashboard reads the audit database in
+read-only mode. Start the pipeline first so the database exists.
 
 ## Documentation
 
@@ -44,6 +55,7 @@ python run_pipeline_demo.py         # starts file + HTTP collectors together
 | 3 | [docs/TELEMETRY.md](docs/TELEMETRY.md) | File/clipboard/HTTP collectors |
 | 4 | [docs/DETECTION_ENGINE.md](docs/DETECTION_ENGINE.md) | Card/SWIFT/secret/keyword/filetype detectors + known limitations |
 | 5 | [docs/NORMALIZATION.md](docs/NORMALIZATION.md) | Base64/URL/JSON/gzip obfuscation detection |
+| 9/10 | [docs/DATABASE.md](docs/DATABASE.md) | Append-only SQLite audit trail and read-only dashboard access |
 
 Or read `IMPLEMENTATION_GUIDE_PHASE_0-5.md` in the project root for all six
 combined into one sequential walkthrough with phase-to-phase checkpoints.
@@ -56,13 +68,13 @@ config/          detection_policy.yaml                   (Phase 2/4)
 collectors/      file, clipboard, HTTP telemetry          (Phase 3)
 detectors/       card, SWIFT, secret, keyword, filetype    (Phase 4)
 normalization/   base64/URL/JSON/gzip obfuscation detect   (Phase 5)
-ai/              local LLM review                          (Phase 6 — not built)
-scoring/         hybrid risk scoring                        (Phase 7 — not built)
-correlation/     behavioral pattern detection                (Phase 8 — not built)
-database/        SQLite audit trail                          (Phase 9 — not built)
-alerts/          alert routing                                (Phase 10 — not built)
-dashboard/       analyst UI                                    (Phase 10 — not built)
-tests/           79 tests, one file per source module
+ai/              local LLM review                          (Phase 6)
+scoring/         hybrid risk scoring                        (Phase 7)
+correlation/     behavioral pattern detection                (Phase 8)
+database/        append-only SQLite audit trail              (Phase 9)
+alerts/          policy-driven alert routing                 (Phase 10)
+dashboard/       read-only analyst UI                       (Phase 10)
+tests/           automated module and integration tests
 simulations/     synthetic fixtures + HTTP exfil-pattern simulator
 ```
 

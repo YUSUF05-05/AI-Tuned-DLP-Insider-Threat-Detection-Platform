@@ -59,8 +59,21 @@ def test_end_to_end_file_created_event_is_logged(tmp_path):
     observer = start_file_collector(str(watch_dir), elogger)
     try:
         time.sleep(0.3)  # let the observer fully start before writing
-        (watch_dir / "notes.txt").write_text("card number 4111111111111111")
-        events = _wait_for_events(log_path, min_count=1)
+        note_path = watch_dir / "notes.txt"
+        note_path.write_text("card number 4111111111111111")
+        # On Windows, ReadDirectoryChangesW may report file creation while
+        # the writer still has the file open and before its content is flushed.
+        # Wait for the later modified event that sees the completed text.
+        deadline = time.time() + 5.0
+        events = []
+        while time.time() < deadline:
+            events = _wait_for_events(log_path, min_count=1)
+            if any(
+                e["object_ref"] == str(note_path) and e["content_excerpt"]
+                for e in events
+            ):
+                break
+            time.sleep(0.1)
     finally:
         observer.stop()
         observer.join(timeout=5)
@@ -71,9 +84,10 @@ def test_end_to_end_file_created_event_is_logged(tmp_path):
     ev = created_events[0]
     assert ev["source"] == "file"
     assert "notes.txt" in ev["object_ref"]
-    assert ev["content_excerpt"] is not None
-    assert "4111111111111111" in ev["content_excerpt"]
-    assert ev["size_bytes"] > 0
+    content_events = [e for e in events if e["object_ref"] == str(note_path) and e["content_excerpt"]]
+    assert content_events
+    assert any(e["size_bytes"] > 0 for e in content_events)
+    assert any("4111111111111111" in e["content_excerpt"] for e in content_events)
 
 
 def test_directory_creation_is_not_logged_as_file_event(tmp_path):

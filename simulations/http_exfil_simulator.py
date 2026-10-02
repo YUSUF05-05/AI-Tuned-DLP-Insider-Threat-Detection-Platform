@@ -66,7 +66,7 @@ SYNTHETIC_SCENARIOS[3]["body"] = base64.b64encode(
 ).decode()
 
 
-def run(base_url: str) -> None:
+def run(base_url: str, timeout_seconds: float = 60.0) -> None:
     ok = requests.get(f"{base_url}/healthz", timeout=5)
     print(f"health check: {ok.status_code} {ok.json()}")
 
@@ -80,7 +80,7 @@ def run(base_url: str) -> None:
             f"{base_url}/upload",
             data=scenario["body"].encode("utf-8"),
             headers=headers,
-            timeout=5,
+            timeout=timeout_seconds,
         )
         print(f"[{scenario['name']}] -> HTTP {resp.status_code} {resp.json()}")
 
@@ -88,9 +88,13 @@ def run(base_url: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Synthetic HTTP exfiltration-pattern simulator (lab-local only)")
     parser.add_argument("--base-url", default="http://127.0.0.1:8765")
+    parser.add_argument(
+        "--timeout", type=float, default=60.0,
+        help="seconds to wait for each upload response (default: 60; AI analysis can take up to 45 seconds)",
+    )
     args = parser.parse_args()
     try:
-        run(args.base_url)
+        run(args.base_url, timeout_seconds=args.timeout)
     except requests.exceptions.ConnectionError:
         print(f"Could not reach {args.base_url} -- is run_pipeline_demo.py or http_collector.py running?")
         sys.exit(1)

@@ -28,16 +28,28 @@ justify it" decision the project asked for.
 
 ## 🏗️ Architecture — full directory tree
 
+> **Update (Phase 10):** the tree below is the Phase 2 scaffold snapshot.
+> `ai/`, `scoring/`, `correlation/`, `database/`, `alerts/`, and `dashboard/`
+> have since been implemented (Phases 6–10) and no longer hold only
+> `.gitkeep`/`README.md` placeholders — see the corrected listing further
+> down and the status table right after it. The commands and code sample
+> later in this doc are left as the historical Phase 2 record of what this
+> phase itself delivered; see `common/event_schema.py` directly, and
+> `docs/DATABASE.md`, for the current, Phase 7/8/9/10-extended state.
+
 ```
 .
 |-- .env.example
 |-- .gitignore
 |-- ai
-|   |-- .gitkeep
-|   `-- README.md
+|   |-- __init__.py
+|   |-- ollama_client.py
+|   |-- prompt_builder.py
+|   `-- response_validator.py
 |-- alerts
-|   |-- .gitkeep
-|   `-- README.md
+|   |-- __init__.py
+|   |-- alert_engine.py
+|   `-- channels.py
 |-- collectors
 |   |-- __init__.py
 |   |-- clipboard_collector.py
@@ -47,16 +59,22 @@ justify it" decision the project asked for.
 |   |-- __init__.py
 |   `-- event_schema.py
 |-- config
-|   `-- detection_policy.yaml
+|   |-- alert_policy.yaml
+|   |-- detection_policy.yaml
+|   `-- risk_policy.yaml
 |-- correlation
-|   |-- .gitkeep
-|   `-- README.md
+|   |-- __init__.py
+|   `-- behavior_tracker.py
 |-- dashboard
-|   |-- .gitkeep
-|   `-- README.md
+|   |-- __init__.py
+|   |-- api.py
+|   |-- run_dashboard.py
+|   `-- templates
+|       `-- index.html
 |-- database
-|   |-- .gitkeep
-|   `-- README.md
+|   |-- __init__.py
+|   |-- schema.sql
+|   `-- sqlite_audit.py
 |-- detectors
 |   |-- __init__.py
 |   |-- card_detector.py
@@ -67,6 +85,7 @@ justify it" decision the project asked for.
 |   `-- swift_detector.py
 |-- docs
 |   |-- ARCHITECTURE.md
+|   |-- DATABASE.md
 |   |-- INSTALLATION.md
 |   `-- THREAT_MODEL.md
 |-- logs
@@ -77,10 +96,11 @@ justify it" decision the project asked for.
 |-- requirements.txt
 |-- run_pipeline_demo.py
 |-- scoring
-|   |-- .gitkeep
-|   `-- README.md
+|   |-- __init__.py
+|   `-- risk_engine.py
 |-- simulations
 |   |-- http_exfil_simulator.py
+|   |-- phase10_smoke_test.py
 |   |-- monitored
 |   |   `-- .gitkeep
 |   |-- synthetic_data
@@ -93,9 +113,14 @@ justify it" decision the project asked for.
 |   `-- verify_fixtures.py
 `-- tests
     |-- __init__.py
+    |-- test_alert_engine.py
     |-- test_card_detector.py
     |-- test_clipboard_collector.py
+    |-- test_dashboard_api.py
+    |-- test_database_behavioral_context.py
+    |-- test_database_immutability.py
     |-- test_engine.py
+    |-- test_existing_modules_smoke.py
     |-- test_file_collector.py
     |-- test_filetype_detector.py
     |-- test_http_collector.py
@@ -103,8 +128,6 @@ justify it" decision the project asked for.
     |-- test_normalizer.py
     |-- test_secret_detector.py
     `-- test_swift_detector.py
-
-18 directories, 56 files
 ```
 
 ## 📁 What belongs in each directory
@@ -116,12 +139,12 @@ justify it" decision the project asked for.
 | `collectors/` | Endpoint telemetry sources: file, clipboard, HTTP | Phase 3 |
 | `detectors/` | Deterministic detection engine (card, SWIFT, secrets, keywords, file type) + aggregator | Phase 4 |
 | `normalization/` | Obfuscation detection (base64, URL-encoding, JSON, gzip/zip) | Phase 5 |
-| `ai/` | Local LLM (Ollama) review of ambiguous content | Phase 6 — not yet built |
-| `scoring/` | Hybrid deterministic + AI risk scoring | Phase 7 — not yet built |
-| `correlation/` | Cross-event behavioral pattern detection | Phase 8 — not yet built |
-| `database/` | SQLite schema + ingestion from the JSONL logs | Phase 9 — not yet built |
-| `alerts/` | Alert routing/formatting | Phase 10 — not yet built |
-| `dashboard/` | Analyst-facing UI | Phase 10 — not yet built |
+| `ai/` | Local LLM (Ollama) review of ambiguous content | ✅ Phase 6 — done |
+| `scoring/` | Hybrid deterministic + AI risk scoring | ✅ Phase 7 — done |
+| `correlation/` | Cross-event behavioral pattern detection | ✅ Phase 8 — done |
+| `database/` | SQLite schema + ingestion from the JSONL logs (append-only as of Phase 10 Step 0 — see `docs/DATABASE.md`) | ✅ Phase 9 — done |
+| `alerts/` | Policy-driven alert engine + pluggable channels | ✅ Phase 10 — done |
+| `dashboard/` | Read-only analyst UI (Flask, own process/port) | ✅ Phase 10 — done |
 | `tests/` | Unit + integration tests, one file per source module | All phases |
 | `simulations/` | Synthetic test fixtures and the HTTP exfiltration-pattern simulator | Phase 3/11 |
 | `logs/` | Runtime JSONL event logs (gitignored — regenerated, never committed) | Runtime |

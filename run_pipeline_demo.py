@@ -58,8 +58,9 @@ from collectors.file_collector import start_file_collector
 from collectors.http_collector import create_app
 from ai.ollama_client import analyze as ollama_analyze
 from scoring.risk_engine import compute_risk
-from correlation.behavior_tracker import correlate
+from correlation.behavior_tracker import correlate, BehavioralContext
 from database.sqlite_audit import SQLiteAuditStore
+from alerts.alert_engine import AlertEngine
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
@@ -68,17 +69,34 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 OLLAMA_TIMEOUT_SECONDS = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "45"))
 DLP_DATABASE_PATH = os.getenv("DLP_DATABASE_PATH", str(ROOT / "database" / "audit_trail.db"))
+ALERT_POLICY_PATH = os.getenv("ALERT_POLICY_PATH", str(ROOT / "config" / "alert_policy.yaml"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("pipeline")
 
 
-def analyze_event(event: DLPEvent, flagged_log_path: Path, use_ai: bool, db: Optional[SQLiteAuditStore] = None) -> None:
+def analyze_event(
+    event: DLPEvent,
+    flagged_log_path: Path,
+    use_ai: bool,
+    db: Optional[SQLiteAuditStore] = None,
+    alert_engine: Optional[AlertEngine] = None,
+) -> None:
     """
-    Runs the full analysis chain (Phases 4-9) and attaches every result to
-    the event in place. Prints a console alert with severity/score on any
-    match, then persists the fully enriched event to SQLite (Phase 9) in
-    addition to the existing JSONL log.
+    Runs the full analysis chain (Phases 4-10) and attaches every result to
+    the event in place. Prints a console summary with severity/score on any
+    match, persists the fully enriched event to SQLite (Phase 9) in
+    addition to the existing JSONL log, then hands it to the Phase 10 alert
+    engine at the same point in the flow as the database write.
+
+    Persistence and alerting are deliberately independent: `alert_engine`
+    still fires even when `db` is None (--no-db), since disabling SQLite
+    persistence for a quick test run is not a reason to also go silent on
+    alerts -- these are two separate concerns that happen to sit next to
+    each other in this function, not one gated behind the other. If you
+    want alerts strictly gated on successful persistence instead, move the
+    alert_engine.process(event) call inside the `if db is not None:` block
+    below.
     """
     text = event.content_excerpt or ""
     filename = event.object_ref if event.source == "file" else None
@@ -127,19 +145,38 @@ def analyze_event(event: DLPEvent, flagged_log_path: Path, use_ai: bool, db: Opt
     if behavior.event_count_in_window:
         print(f"        behavioral: {behavior.event_count_in_window} prior flagged event(s) for {event.user} in window, escalating={behavior.escalating}")
 
-    # Phase 9: persist the fully enriched event. Safe fallback, matching
-    # Phase 6's philosophy -- a DB problem (locked file, full disk) is
-    # logged, never allowed to crash the collector thread that found this.
+    # Phase 9: persist the fully enriched event, including the FULL Phase 8
+    # behavioral context (not just the adjustment integer already folded
+    # into risk_assessment -- see database/sqlite_audit.py's insert_event()
+    # docstring and docs/DATABASE.md for why that distinction matters).
+    # Safe fallback, matching Phase 6's philosophy -- a DB problem (locked
+    # file, full disk) is logged, never allowed to crash the collector
+    # thread that found this.
     if db is not None:
         try:
-            db.insert_event(event)
+            db.insert_event(event, behavior=behavior)
         except Exception as exc:  # noqa: BLE001 -- intentionally broad, see module docstring
             logger.error("SQLite persistence failed for event %s: %s", event.event_id, exc)
 
+    # Phase 10: alert engine. Same safe-fallback treatment as AI/DB above --
+    # alerts/channels.py's channels already never raise on their own, but
+    # this still wraps the call so a future channel that forgets that
+    # contract can't take the collector thread down with it.
+    if alert_engine is not None:
+        try:
+            alert_engine.process(event)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Alert engine failed for event %s: %s", event.event_id, exc)
 
-def build_on_event(flagged_logger: JsonlEventLogger, use_ai: bool, db: Optional[SQLiteAuditStore] = None):
+
+def build_on_event(
+    flagged_logger: JsonlEventLogger,
+    use_ai: bool,
+    db: Optional[SQLiteAuditStore] = None,
+    alert_engine: Optional[AlertEngine] = None,
+):
     def on_event(event: DLPEvent):
-        analyze_event(event, flagged_log_path=Path(flagged_logger.log_path), use_ai=use_ai, db=db)
+        analyze_event(event, flagged_log_path=Path(flagged_logger.log_path), use_ai=use_ai, db=db, alert_engine=alert_engine)
         if event.any_match:
             flagged_logger.write(event)
 
@@ -154,6 +191,8 @@ def main():
     parser.add_argument("--no-ai", action="store_true", help="Skip Phase 6 AI review (e.g. Ollama not running)")
     parser.add_argument("--no-db", action="store_true", help="Skip Phase 9 SQLite persistence (JSONL logs only)")
     parser.add_argument("--db-path", default=DLP_DATABASE_PATH, help="SQLite database file path")
+    parser.add_argument("--no-alerts", action="store_true", help="Skip Phase 10 alert dispatch")
+    parser.add_argument("--alert-policy-path", default=ALERT_POLICY_PATH, help="Alert policy YAML path")
     args = parser.parse_args()
 
     Path(args.watch_dir).mkdir(parents=True, exist_ok=True)
@@ -164,8 +203,14 @@ def main():
         db = SQLiteAuditStore(db_path=args.db_path)
         logger.info("SQLite audit trail: %s (%d existing event(s))", args.db_path, db.count_events())
 
+    alert_engine = None
+    if not args.no_alerts:
+        alert_engine = AlertEngine(policy_path=args.alert_policy_path)
+        enabled = [c.name for c in alert_engine.channels]
+        logger.info("Alert engine enabled: threshold=%s channels=%s", alert_engine.threshold, enabled)
+
     flagged_logger = JsonlEventLogger(ROOT / "logs" / "flagged_events.jsonl")
-    on_event = build_on_event(flagged_logger, use_ai=not args.no_ai, db=db)
+    on_event = build_on_event(flagged_logger, use_ai=not args.no_ai, db=db, alert_engine=alert_engine)
 
     file_event_logger = JsonlEventLogger(ROOT / "logs" / "file_events.jsonl")
     observer = start_file_collector(args.watch_dir, file_event_logger, on_event=on_event)
